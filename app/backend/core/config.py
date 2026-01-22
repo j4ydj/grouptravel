@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     # Pricing
     price_volatility: bool = False
     
+    # Duffel API
+    duffel_api_key: Optional[str] = None
+    
     # Logging
     log_level: str = "INFO"
     

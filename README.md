@@ -126,6 +126,7 @@ docker-compose up --build
 | `GOOGLE_APPLICATION_CREDENTIALS` | Path to GCP credentials JSON (if using Vertex) | - |
 | `VERTEX_PROJECT` | GCP project ID (if using Vertex) | - |
 | `VERTEX_LOCATION` | GCP location (e.g., `us-central1`) | `us-central1` |
+| `DUFFEL_API_KEY` | Duffel API access token (if using real flight data) | - |
 | `PRICE_VOLATILITY` | Enable price volatility in mock pricing | `false` |
 | `LOG_LEVEL` | Logging level | `INFO` |
 
@@ -149,6 +150,13 @@ docker-compose up --build
 
 1. Set `LLM_PROVIDER=mock` in `.env`
 2. No API keys needed - works offline with hardcoded responses
+
+### Using Real Flight Data (Duffel)
+
+1. Set `DUFFEL_API_KEY=duffel_test_...` in `.env`
+2. The system will automatically use Duffel API instead of mock pricing when the key is set
+3. Get your API key from: https://duffel.com/dashboard
+4. **Note**: Duffel test keys have rate limits. For production, use a live API key.
 
 ## Usage Examples
 

@@ -5,6 +5,8 @@ from typing import Optional
 import random
 import hashlib
 from functools import lru_cache
+import aiohttp
+import json
 from sqlalchemy.orm import Session
 from sqlalchemy import create_engine, Column, String, Float, DateTime, Text
 from sqlalchemy import Integer
@@ -252,7 +254,23 @@ class TravelpayoutsProvider(PricingProvider):
 
 
 class DuffelProvider(PricingProvider):
-    """Stub for Duffel provider."""
+    """Duffel API pricing provider."""
+    
+    DUFFEL_API_BASE = "https://api.duffel.com"
+    
+    def __init__(self, api_key: str):
+        """
+        Initialize Duffel provider.
+        
+        Args:
+            api_key: Duffel API access token
+        """
+        self.api_key = api_key
+        self.headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Duffel-Version": "v2",
+            "Content-Type": "application/json"
+        }
     
     async def get_best_itinerary(
         self,
@@ -262,8 +280,146 @@ class DuffelProvider(PricingProvider):
         return_date: date,
         constraints: dict
     ) -> Itinerary:
-        """TODO: Implement Duffel integration."""
-        raise NotImplementedError("DuffelProvider not yet implemented")
+        """
+        Get best itinerary from Duffel API.
+        
+        Args:
+            origin: Origin IATA code
+            destination: Destination IATA code
+            depart_date: Departure date
+            return_date: Return date
+            constraints: Additional constraints
+        
+        Returns:
+            Itinerary object
+        """
+        # Map travel class
+        cabin_class_map = {
+            "economy": "economy",
+            "premium_economy": "premium_economy",
+            "business": "business",
+            "first": "first"
+        }
+        cabin_class = cabin_class_map.get(constraints.get("travel_class", "economy"), "economy")
+        
+        # Create offer request
+        offer_request_data = {
+            "slices": [
+                {
+                    "origin": origin,
+                    "destination": destination,
+                    "departure_date": depart_date.isoformat()
+                },
+                {
+                    "origin": destination,
+                    "destination": origin,
+                    "departure_date": return_date.isoformat()
+                }
+            ],
+            "passengers": [
+                {
+                    "type": "adult"
+                }
+            ],
+            "cabin_class": cabin_class
+        }
+        
+        async with aiohttp.ClientSession() as session:
+            try:
+                # Create offer request
+                async with session.post(
+                    f"{self.DUFFEL_API_BASE}/air/offer_requests",
+                    headers=self.headers,
+                    json={"data": offer_request_data}
+                ) as resp:
+                    if resp.status != 201:
+                        error_text = await resp.text()
+                        raise ValueError(f"Duffel API error: {resp.status} - {error_text}")
+                    
+                    offer_request = await resp.json()
+                    offer_request_id = offer_request["data"]["id"]
+                
+                # Get offers
+                async with session.get(
+                    f"{self.DUFFEL_API_BASE}/air/offers?offer_request_id={offer_request_id}",
+                    headers=self.headers
+                ) as resp:
+                    if resp.status != 200:
+                        error_text = await resp.text()
+                        raise ValueError(f"Duffel API error: {resp.status} - {error_text}")
+                    
+                    offers_response = await resp.json()
+                    offers = offers_response.get("data", [])
+                
+                if not offers:
+                    raise ValueError("No offers returned from Duffel API")
+                
+                # Select best offer (lowest total_amount)
+                best_offer = min(offers, key=lambda o: float(o.get("total_amount", "0")))
+                
+                # Extract itinerary details
+                slices = best_offer.get("slices", [])
+                if len(slices) < 2:
+                    raise ValueError("Invalid offer: missing return slice")
+                
+                outbound_slice = slices[0]
+                return_slice = slices[1]
+                
+                # Get first segment of outbound
+                outbound_segments = outbound_slice.get("segments", [])
+                if not outbound_segments:
+                    raise ValueError("No segments in outbound slice")
+                
+                first_segment = outbound_segments[0]
+                last_segment = outbound_segments[-1]
+                
+                # Calculate stops
+                stops = len(outbound_segments) - 1
+                
+                # Parse times
+                depart_time_str = first_segment.get("departing_at", "")
+                arrive_time_str = last_segment.get("arriving_at", "")
+                
+                # Parse datetime strings
+                depart_dt = datetime.fromisoformat(depart_time_str.replace("Z", "+00:00"))
+                arrive_dt = datetime.fromisoformat(arrive_time_str.replace("Z", "+00:00"))
+                
+                depart_time = time(depart_dt.hour, depart_dt.minute)
+                arrive_time = time(arrive_dt.hour, arrive_dt.minute)
+                
+                # Calculate travel minutes
+                travel_minutes = int((arrive_dt - depart_dt).total_seconds() / 60)
+                
+                # Get airline
+                airline = first_segment.get("marketing_carrier", {}).get("iata_code", "UNKNOWN")
+                
+                # Get price (Duffel returns amount as string, e.g., "123.45")
+                total_amount = best_offer.get("total_amount", "0")
+                currency = best_offer.get("total_currency", "USD")
+                # Convert to float (amount is already in major currency units)
+                price = float(total_amount)
+                
+                # Generate Concur deep link
+                concur_link = f"https://concur.example.com/book?origin={origin}&dest={destination}&date={depart_date}&offer_id={best_offer.get('id', '')}"
+                
+                return Itinerary(
+                    origin=origin,
+                    destination=destination,
+                    depart_date=depart_date,
+                    return_date=return_date,
+                    airline=airline,
+                    stops=stops,
+                    depart_time=depart_time,
+                    arrive_time=arrive_time,
+                    travel_minutes=travel_minutes,
+                    price=round(price, 2),
+                    concur_deep_link=concur_link
+                )
+                
+            except aiohttp.ClientError as e:
+                raise ValueError(f"Duffel API request failed: {str(e)}")
+            except (KeyError, ValueError, TypeError) as e:
+                raise ValueError(f"Failed to parse Duffel API response: {str(e)}")
 
 
 class ConcurProvider(PricingProvider):

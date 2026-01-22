@@ -37,7 +37,15 @@ page = st.sidebar.selectbox(
         "Run Simulation",
         "View Results",
         "AI Summary",
-        "Ask AI"
+        "Ask AI",
+        # Phase 2 pages
+        "Manage Hotels",
+        "Hotels & Nights",
+        "Transfers",
+        "Operational View",
+        "Finance View",
+        "What-If Lab",
+        "AI Brief"
     ]
 )
 
@@ -411,3 +419,354 @@ elif page == "Ask AI":
                         st.caption(f"Confidence: {result['confidence']}")
                 else:
                     st.error("Failed to get answer")
+
+
+# Page: Manage Hotels
+elif page == "Manage Hotels":
+    st.header("Manage Hotels")
+    
+    tab1, tab2 = st.tabs(["List Hotels", "Add Hotel"])
+    
+    with tab1:
+        st.subheader("All Hotels")
+        airport_filter = st.text_input("Filter by Airport Code (optional)", max_chars=3).upper()
+        approved_only = st.checkbox("Show approved only", value=False)
+        
+        params = {}
+        if airport_filter:
+            params["airport_code"] = airport_filter
+        if approved_only:
+            params["approved"] = "true"
+        
+        query_string = "&".join([f"{k}={v}" for k, v in params.items()])
+        endpoint = f"/hotels?{query_string}" if query_string else "/hotels"
+        
+        hotels_data = api_request("GET", endpoint)
+        if hotels_data:
+            df = pd.DataFrame([
+                {
+                    "ID": h["id"],
+                    "Name": h["name"],
+                    "City": h["city"],
+                    "Airport": h["airport_code"],
+                    "Chain": h.get("chain", ""),
+                    "Approved": "Yes" if h["approved"] else "No",
+                    "Corporate Rate": f"${h.get('corporate_rate', 0):.2f}" if h.get("corporate_rate") else "N/A",
+                    "Capacity": h.get("capacity", "N/A"),
+                    "Distance (km)": h.get("distance_to_venue_km", "N/A")
+                }
+                for h in hotels_data
+            ])
+            st.dataframe(df, use_container_width=True)
+        else:
+            st.info("No hotels found")
+    
+    with tab2:
+        st.subheader("Add New Hotel")
+        with st.form("add_hotel_form"):
+            name = st.text_input("Hotel Name *")
+            city = st.text_input("City *")
+            airport_code = st.text_input("Airport Code (IATA) *", max_chars=3).upper()
+            chain = st.text_input("Hotel Chain")
+            approved = st.checkbox("Approved for corporate use")
+            corporate_rate = st.number_input("Corporate Rate (USD/night)", min_value=0.0, value=150.0)
+            distance_km = st.number_input("Distance to Venue (km)", min_value=0.0, value=5.0)
+            capacity = st.number_input("Room Capacity", min_value=1, value=50)
+            has_meeting_space = st.checkbox("Has Meeting Space")
+            
+            submitted = st.form_submit_button("Add Hotel")
+            
+            if submitted:
+                if name and city and len(airport_code) == 3:
+                    hotel_data = {
+                        "name": name,
+                        "city": city,
+                        "airport_code": airport_code,
+                        "chain": chain if chain else None,
+                        "approved": approved,
+                        "corporate_rate": corporate_rate,
+                        "distance_to_venue_km": distance_km,
+                        "capacity": capacity,
+                        "has_meeting_space": has_meeting_space
+                    }
+                    
+                    result = api_request("POST", "/hotels", hotel_data)
+                    if result:
+                        st.success(f"Added hotel: {name}")
+                    else:
+                        st.error("Failed to add hotel")
+                else:
+                    st.error("Please fill in required fields")
+
+
+# Page: Hotels & Nights
+elif page == "Hotels & Nights":
+    st.header("Hotels & Room Nights Analysis")
+    
+    events_data = api_request("GET", "/events")
+    if events_data and isinstance(events_data, list):
+        events = events_data
+    else:
+        events = []
+    
+    if not events:
+        st.warning("No events found.")
+        event_id_input = st.text_input("Or enter Event ID manually")
+    else:
+        event_options = {f"{e['name']} ({e['id']})": e['id'] for e in events}
+        selected_event_name = st.selectbox("Select Event", list(event_options.keys()))
+        event_id_input = event_options[selected_event_name]
+    
+    if event_id_input:
+        results_data = api_request("GET", f"/events/{event_id_input}/results/latest")
+        
+        if results_data:
+            results = results_data.get("results", [])
+            ranked = results_data.get("ranked_options", [])
+            
+            if results:
+                st.subheader("Hotel Assignments by Option")
+                
+                for rank_idx, opt_idx in enumerate(ranked[:5]):  # Top 5
+                    opt = results[opt_idx]
+                    with st.expander(f"Rank {rank_idx + 1}: {opt['location']}"):
+                        if opt.get("hotel_assignment"):
+                            hotel = opt["hotel_assignment"]
+                            st.write(f"**Hotel:** {hotel.get('hotel_name', 'N/A')}")
+                            st.write(f"**Total Cost:** ${hotel.get('total_cost', 0):,.2f}")
+                            st.write(f"**Room Nights:** {hotel.get('room_nights', 0)}")
+                            st.write(f"**Extra Nights:** {hotel.get('extra_nights', 0)}")
+                            
+                            if hotel.get("room_night_analysis"):
+                                analysis = hotel["room_night_analysis"]
+                                st.write(f"**Peak Occupancy:** {analysis.get('peak_occupancy', 0)} rooms")
+                                
+                                # Room night curve
+                                if analysis.get("required_rooms_per_night"):
+                                    st.line_chart(analysis["required_rooms_per_night"])
+                        else:
+                            st.info("No hotel assignment available")
+            else:
+                st.info("No results available")
+        else:
+            st.warning("No simulation results found. Run a simulation first.")
+
+
+# Page: Transfers
+elif page == "Transfers":
+    st.header("Transfer Plans")
+    
+    events_data = api_request("GET", "/events")
+    if events_data and isinstance(events_data, list):
+        events = events_data
+    else:
+        events = []
+    
+    if not events:
+        st.warning("No events found.")
+        event_id_input = st.text_input("Or enter Event ID manually")
+    else:
+        event_options = {f"{e['name']} ({e['id']})": e['id'] for e in events}
+        selected_event_name = st.selectbox("Select Event", list(event_options.keys()))
+        event_id_input = event_options[selected_event_name]
+    
+    if event_id_input:
+        option_index = st.number_input("Option Index", min_value=0, value=0)
+        
+        transfer_plan_data = api_request("GET", f"/events/{event_id_input}/transfer-plan?option_index={option_index}")
+        
+        if transfer_plan_data:
+            st.subheader("Transfer Plan")
+            st.write(f"**Total Cost:** ${transfer_plan_data.get('total_cost', 0):,.2f}")
+            st.write(f"**Total Vehicles:** {transfer_plan_data.get('total_vehicles', 0)}")
+            st.write(f"**Complexity Score:** {transfer_plan_data.get('operational_complexity_score', 0):.2f}")
+            
+            st.subheader("Transfer Waves")
+            for leg in transfer_plan_data.get("legs", []):
+                wave = leg.get("wave", {})
+                st.write(f"**Wave:** {wave.get('wave_start', 'N/A')} - {wave.get('wave_end', 'N/A')}")
+                st.write(f"  - Mode: {leg.get('mode', 'N/A')}")
+                st.write(f"  - Vehicles: {leg.get('vehicle_count', 0)}")
+                st.write(f"  - Cost: ${leg.get('total_cost', 0):,.2f}")
+                st.write(f"  - Capacity Utilization: {leg.get('capacity_utilization', 0):.1%}")
+        else:
+            st.warning("No transfer plan available. Run simulation with transfers enabled.")
+
+
+# Page: Operational View
+elif page == "Operational View":
+    st.header("Operational View")
+    
+    events_data = api_request("GET", "/events")
+    if events_data and isinstance(events_data, list):
+        events = events_data
+    else:
+        events = []
+    
+    if not events:
+        st.warning("No events found.")
+        event_id_input = st.text_input("Or enter Event ID manually")
+    else:
+        event_options = {f"{e['name']} ({e['id']})": e['id'] for e in events}
+        selected_event_name = st.selectbox("Select Event", list(event_options.keys()))
+        event_id_input = event_options[selected_event_name]
+    
+    if event_id_input:
+        results_data = api_request("GET", f"/events/{event_id_input}/results/latest")
+        
+        if results_data:
+            results = results_data.get("results", [])
+            ranked = results_data.get("ranked_options", [])
+            
+            if results:
+                best_option = results[ranked[0]]
+                
+                st.subheader("Arrival Histogram")
+                if best_option.get("arrival_histogram"):
+                    histogram = best_option["arrival_histogram"]
+                    # Create DataFrame for chart
+                    hours = list(range(24))
+                    df_hist = pd.DataFrame({
+                        "Hour": hours,
+                        "Arrivals": histogram
+                    })
+                    st.bar_chart(df_hist.set_index("Hour"))
+                
+                st.subheader("Key Metrics")
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("Arrival Spread", f"{best_option.get('arrival_spread_minutes', 0):.0f} min")
+                with col2:
+                    st.metric("Late Arrival Risk", f"{best_option.get('late_arrival_risk', 0):.1%}")
+                with col3:
+                    st.metric("Operational Complexity", f"{best_option.get('operational_complexity_score', 0):.1f}")
+                with col4:
+                    st.metric("CO2 Estimate", f"{best_option.get('co2_estimate_kg', 0):.1f} kg")
+            else:
+                st.info("No results available")
+        else:
+            st.warning("No simulation results found.")
+
+
+# Page: Finance View
+elif page == "Finance View":
+    st.header("Finance View")
+    
+    events_data = api_request("GET", "/events")
+    if events_data and isinstance(events_data, list):
+        events = events_data
+    else:
+        events = []
+    
+    if not events:
+        st.warning("No events found.")
+        event_id_input = st.text_input("Or enter Event ID manually")
+    else:
+        event_options = {f"{e['name']} ({e['id']})": e['id'] for e in events}
+        selected_event_name = st.selectbox("Select Event", list(event_options.keys()))
+        event_id_input = event_options[selected_event_name]
+    
+    if event_id_input:
+        format_choice = st.selectbox("Export Format", ["json", "csv"])
+        
+        if st.button("Generate Finance Export"):
+            finance_data = api_request("GET", f"/events/{event_id_input}/export/finance?format={format_choice}")
+            
+            if finance_data:
+                if format_choice == "json":
+                    st.json(finance_data)
+                else:
+                    st.download_button(
+                        label="Download CSV",
+                        data=finance_data if isinstance(finance_data, str) else str(finance_data),
+                        file_name=f"finance_export_{event_id_input}.csv",
+                        mime="text/csv"
+                    )
+                
+                # Cost waterfall
+                st.subheader("Cost Breakdown")
+                if isinstance(finance_data, dict):
+                    costs = finance_data.get("cost_by_category", {})
+                    if costs:
+                        df_costs = pd.DataFrame(list(costs.items()), columns=["Category", "Cost"])
+                        st.bar_chart(df_costs.set_index("Category"))
+            else:
+                st.error("Failed to generate finance export")
+
+
+# Page: What-If Lab
+elif page == "What-If Lab":
+    st.header("What-If Exploration Lab")
+    
+    events_data = api_request("GET", "/events")
+    if events_data and isinstance(events_data, list):
+        events = events_data
+    else:
+        events = []
+    
+    if not events:
+        st.warning("No events found.")
+        event_id_input = st.text_input("Or enter Event ID manually")
+    else:
+        event_options = {f"{e['name']} ({e['id']})": e['id'] for e in events}
+        selected_event_name = st.selectbox("Select Event", list(event_options.keys()))
+        event_id_input = event_options[selected_event_name]
+    
+    if event_id_input:
+        if st.button("Run What-If Exploration", type="primary"):
+            with st.spinner("Exploring variations..."):
+                whatif_results = api_request("POST", f"/events/{event_id_input}/ai/whatif")
+                
+                if whatif_results:
+                    st.success(f"Generated {len(whatif_results)} variations")
+                    
+                    for idx, result in enumerate(whatif_results):
+                        proposal = result.get("proposal", {})
+                        st.subheader(f"Variation {idx + 1}: {proposal.get('description', 'N/A')}")
+                        
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.metric("Delta Cost", f"${result.get('delta_cost', 0):,.2f}")
+                        with col2:
+                            st.metric("Delta Score", f"{result.get('delta_score', 0):.2f}")
+                        
+                        new_result = result.get("new_result", {})
+                        st.write(f"**New Total Cost:** ${new_result.get('total_cost', 0):,.2f}")
+                        st.write(f"**New Score:** {new_result.get('score', 0):.2f}")
+                else:
+                    st.error("What-if exploration failed")
+
+
+# Page: AI Brief
+elif page == "AI Brief":
+    st.header("AI Organiser Brief")
+    
+    events_data = api_request("GET", "/events")
+    if events_data and isinstance(events_data, list):
+        events = events_data
+    else:
+        events = []
+    
+    if not events:
+        st.warning("No events found.")
+        event_id_input = st.text_input("Or enter Event ID manually")
+    else:
+        event_options = {f"{e['name']} ({e['id']})": e['id'] for e in events}
+        selected_event_name = st.selectbox("Select Event", list(event_options.keys()))
+        event_id_input = event_options[selected_event_name]
+    
+    if event_id_input:
+        if st.button("Generate Brief", type="primary"):
+            with st.spinner("Generating comprehensive brief..."):
+                brief_data = api_request("GET", f"/events/{event_id_input}/export/brief")
+                
+                if brief_data:
+                    st.success("Brief generated!")
+                    st.markdown(f"### Executive Summary\n\n{brief_data.get('executive_summary', 'N/A')}")
+                    st.markdown(f"### Recommended Option\n\n{brief_data.get('recommended_option', {})}")
+                    st.markdown(f"### Operational Plan\n\n{brief_data.get('operational_plan', 'N/A')}")
+                    st.markdown(f"### Hotel Plan\n\n{brief_data.get('hotel_plan', 'N/A')}")
+                    st.markdown(f"### Transfer Plan\n\n{brief_data.get('transfer_plan', 'N/A')}")
+                    st.markdown(f"### Booking Instructions\n\n{brief_data.get('booking_instructions', 'N/A')}")
+                else:
+                    st.error("Failed to generate brief")

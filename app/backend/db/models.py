@@ -1,5 +1,5 @@
 """SQLAlchemy 2.0 database models."""
-from sqlalchemy import Column, String, Integer, DateTime, ForeignKey, JSON, Enum as SQLEnum
+from sqlalchemy import Column, String, Integer, DateTime, ForeignKey, JSON, Enum as SQLEnum, Boolean, Float
 from sqlalchemy.orm import relationship, declarative_base
 from datetime import datetime
 import enum
@@ -75,5 +75,88 @@ class SimulationResult(Base):
     version = Column(Integer, nullable=False, default=1)
     created_at = Column(DateTime, default=datetime.utcnow)
     
+    # Phase 2: Reproducibility fields
+    pricing_provider = Column(String, nullable=True)  # "mock", "duffel", etc.
+    pricing_cache_version = Column(String, nullable=True)
+    random_seed = Column(Integer, nullable=True)
+    config_snapshot = Column(JSON, nullable=True)  # Frozen settings at simulation time
+    
     # Relationships
     event = relationship("Event", back_populates="simulation_results")
+
+
+class Hotel(Base):
+    """Hotel model."""
+    __tablename__ = "hotels"
+    
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    name = Column(String, nullable=False)
+    city = Column(String, nullable=False)
+    airport_code = Column(String(3), nullable=False, index=True)
+    chain = Column(String, nullable=True)
+    approved = Column(Boolean, default=False, nullable=False)
+    corporate_rate = Column(Float, nullable=True)
+    distance_to_venue_km = Column(Float, nullable=True)
+    capacity = Column(Integer, nullable=True)
+    has_meeting_space = Column(Boolean, default=False, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Relationships
+    transfer_options = relationship("TransferOption", back_populates="hotel", cascade="all, delete-orphan")
+
+
+class TransferMode(str, enum.Enum):
+    """Transfer mode enumeration."""
+    UBER = "uber"
+    VAN = "van"
+    TRAIN = "train"
+    BUS = "bus"
+
+
+class TransferOption(Base):
+    """Transfer option model."""
+    __tablename__ = "transfer_options"
+    
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    airport_code = Column(String(3), nullable=False, index=True)
+    hotel_id = Column(String, ForeignKey("hotels.id"), nullable=True)
+    mode = Column(SQLEnum(TransferMode), nullable=False)
+    capacity = Column(Integer, nullable=False)
+    cost_per_trip = Column(Float, nullable=False)
+    duration_minutes = Column(Integer, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Relationships
+    hotel = relationship("Hotel", back_populates="transfer_options")
+
+
+class PreferenceProfile(Base):
+    """Preference profile model for learning attendee preferences."""
+    __tablename__ = "preference_profiles"
+    
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    attendee_id = Column(String, ForeignKey("attendees.id"), unique=True, nullable=False, index=True)
+    prefers_early_flights = Column(Float, default=0.5, nullable=False)  # 0-1
+    avoids_connections = Column(Float, default=0.5, nullable=False)     # 0-1
+    preferred_hubs = Column(JSON, default=list)
+    typical_arrival_window = Column(JSON, nullable=True)  # {start: "HH:MM", end: "HH:MM"}
+    reliability_score = Column(Float, default=1.0, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Relationships
+    attendee = relationship("Attendee", backref="preference_profile")
+
+
+class AuditLog(Base):
+    """Audit log model for tracking actions."""
+    __tablename__ = "audit_logs"
+    
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    event_id = Column(String, ForeignKey("events.id"), nullable=True, index=True)
+    user = Column(String, nullable=False)
+    action = Column(String, nullable=False)  # simulate, export, whatif, etc.
+    timestamp = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    before_hash = Column(String, nullable=True)
+    after_hash = Column(String, nullable=True)
+    metadata = Column(JSON, nullable=True)
