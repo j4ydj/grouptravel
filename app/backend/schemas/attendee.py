@@ -32,6 +32,16 @@ class Attendee(BaseModel):
         from_attributes = True
 
 
+class AttendeeUpdate(BaseModel):
+    """Schema for updating an attendee."""
+    home_airport: Optional[str] = Field(None, min_length=3, max_length=3, description="IATA airport code")
+    preferred_airports: Optional[List[str]] = Field(None, description="Preferred airport codes")
+    travel_class: Optional[TravelClass] = Field(None, description="Preferred travel class")
+    preferred_airlines: Optional[List[str]] = Field(None, description="Preferred airline codes")
+    time_constraints: Optional[Dict[str, Any]] = Field(None, description="Time constraints")
+    timezone: Optional[str] = Field(None, description="Timezone")
+
+
 class AttendeeList(BaseModel):
     """Schema for list of attendees."""
     attendees: List[Attendee]

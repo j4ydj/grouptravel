@@ -159,4 +159,4 @@ class AuditLog(Base):
     timestamp = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
     before_hash = Column(String, nullable=True)
     after_hash = Column(String, nullable=True)
-    metadata = Column(JSON, nullable=True)
+    metadata_json = Column(JSON, nullable=True)  # Renamed from 'metadata' to avoid SQLAlchemy conflict

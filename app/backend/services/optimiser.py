@@ -7,7 +7,7 @@ from app.backend.services.pricing import MockPricingProvider, PricingProvider, D
 from app.backend.services.hotel import HotelOptimisationService
 from app.backend.services.transfer import TransferBatchingService
 from app.backend.services.preference import PreferenceLearningService
-from app.backend.schemas.itinerary import OptionResult, OptionResultV2, AttendeeItinerary, Itinerary
+from app.backend.schemas.itinerary import OptionResult, OptionResultV2, AttendeeItinerary, Itinerary, ItinerarySegment
 from app.backend.schemas.event import DateWindow
 from app.backend.core.config import settings
 
@@ -20,12 +20,14 @@ class OptimiserService:
         Initialize optimiser service.
         
         Args:
-            pricing_provider: Pricing provider instance (defaults to MockPricingProvider or DuffelProvider if configured)
+            pricing_provider: Pricing provider instance (defaults based on settings)
         """
         if pricing_provider:
             self.pricing_provider = pricing_provider
-        elif settings.duffel_api_key:
-            # Use Duffel if API key is configured
+        elif settings.pricing_provider == "duffel":
+            # Use Duffel if explicitly configured
+            if not settings.duffel_api_key:
+                raise ValueError("DUFFEL_API_KEY required when PRICING_PROVIDER=duffel")
             self.pricing_provider = DuffelProvider(api_key=settings.duffel_api_key)
         else:
             # Default to mock
@@ -77,6 +79,42 @@ class OptimiserService:
         hours = (minutes // 60) % 24
         mins = minutes % 60
         return time(hours, mins)
+
+    def _build_local_itinerary(
+        self,
+        attendee: Attendee,
+        location: str,
+        depart_date: date,
+        return_date: date
+    ) -> Itinerary:
+        """Create a zero-travel itinerary for local attendees."""
+        return Itinerary(
+            origin=attendee.home_airport,
+            destination=location,
+            depart_date=depart_date,
+            return_date=return_date,
+            airline="LOCAL",
+            flight_number="LOCAL",
+            stops=0,
+            depart_time=time(9, 0),
+            arrive_time=time(9, 0),
+            travel_minutes=0,
+            price=0.0,
+            concur_deep_link=None,
+            segments=[
+                ItinerarySegment(
+                    leg="outbound",
+                    segment_index=0,
+                    origin=attendee.home_airport,
+                    destination=location,
+                    depart_time=time(9, 0),
+                    arrive_time=time(9, 0),
+                    airline="LOCAL",
+                    flight_number="LOCAL",
+                    duration_minutes=0
+                )
+            ]
+        )
     
     async def simulate_option(
         self,
@@ -114,15 +152,23 @@ class OptimiserService:
                 "preferred_airlines": attendee.preferred_airlines or [],
                 "time_constraints": attendee.time_constraints or {}
             }
-            
-            # Get itinerary from pricing provider
-            itinerary = await self.pricing_provider.get_best_itinerary(
-                origin=attendee.home_airport,
-                destination=location,
-                depart_date=depart_date,
-                return_date=return_date,
-                constraints=constraints
-            )
+
+            if attendee.home_airport == location:
+                itinerary = self._build_local_itinerary(
+                    attendee=attendee,
+                    location=location,
+                    depart_date=depart_date,
+                    return_date=return_date
+                )
+            else:
+                # Get itinerary from pricing provider
+                itinerary = await self.pricing_provider.get_best_itinerary(
+                    origin=attendee.home_airport,
+                    destination=location,
+                    depart_date=depart_date,
+                    return_date=return_date,
+                    constraints=constraints
+                )
             
             # Track metrics
             total_cost += itinerary.price
@@ -391,14 +437,22 @@ class OptimiserService:
                 "preferred_airlines": attendee.preferred_airlines or [],
                 "time_constraints": attendee.time_constraints or {}
             }
-            
-            itinerary = await self.pricing_provider.get_best_itinerary(
-                origin=attendee.home_airport,
-                destination=location,
-                depart_date=depart_date,
-                return_date=return_date,
-                constraints=constraints
-            )
+
+            if attendee.home_airport == location:
+                itinerary = self._build_local_itinerary(
+                    attendee=attendee,
+                    location=location,
+                    depart_date=depart_date,
+                    return_date=return_date
+                )
+            else:
+                itinerary = await self.pricing_provider.get_best_itinerary(
+                    origin=attendee.home_airport,
+                    destination=location,
+                    depart_date=depart_date,
+                    return_date=return_date,
+                    constraints=constraints
+                )
             
             total_cost += itinerary.price
             total_travel_time += itinerary.travel_minutes
@@ -407,7 +461,10 @@ class OptimiserService:
             
             # Build datetime objects for arrival/departure
             arrival_dt = datetime.combine(depart_date, itinerary.arrive_time)
-            departure_dt = datetime.combine(return_date, itinerary.depart_time) if hasattr(itinerary, 'return_depart_time') else datetime.combine(return_date, time(10, 0))
+            if itinerary.airline == "LOCAL":
+                departure_dt = datetime.combine(return_date, time(17, 0))
+            else:
+                departure_dt = datetime.combine(return_date, itinerary.depart_time) if hasattr(itinerary, 'return_depart_time') else datetime.combine(return_date, time(10, 0))
             
             all_arrival_times.append(arrival_dt)
             all_departure_times.append(departure_dt)
@@ -446,8 +503,8 @@ class OptimiserService:
                 airport_code=location,
                 num_attendees=num_attendees,
                 room_nights=room_nights,
-                approved_only=True,
-                db=db
+                db=db,
+                approved_only=True
             )
             
             if hotel_assignment:
@@ -482,7 +539,8 @@ class OptimiserService:
         co2_estimate = self._calculate_co2_estimate(attendee_itineraries)
         arrival_histogram = self._build_arrival_histogram(all_arrival_times)
         
-        # Calculate Phase 2 score
+        # Calculate totals and Phase 2 score
+        total_cost_with_hotels = total_cost + hotel_cost + transfer_cost
         score = self._calculate_score_v2(
             flight_cost=total_cost,
             hotel_cost=hotel_cost,
@@ -499,7 +557,7 @@ class OptimiserService:
             location=location,
             date_window_start=date_window.start_date,
             date_window_end=date_window.end_date,
-            total_cost=round(total_cost, 2),
+            total_cost=round(total_cost_with_hotels, 2),
             avg_travel_time_minutes=round(avg_travel_time_minutes, 2),
             arrival_spread_minutes=round(arrival_spread_minutes, 2),
             connections_rate=round(connections_rate, 4),
@@ -509,6 +567,7 @@ class OptimiserService:
         
         return OptionResultV2(
             **base_result.model_dump(),
+            flight_cost=round(total_cost, 2),
             hotel_cost=round(hotel_cost, 2),
             extra_nights_count=extra_nights_count,
             transfer_cost=round(transfer_cost, 2),

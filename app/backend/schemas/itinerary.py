@@ -1,9 +1,22 @@
 """Itinerary and result schemas."""
 from pydantic import BaseModel, Field
-from typing import List, Optional
+from typing import List, Optional, Literal
 from datetime import datetime, date, time
 from app.backend.schemas.hotel import HotelAssignment
 from app.backend.schemas.transfer import TransferPlan
+
+
+class ItinerarySegment(BaseModel):
+    """Individual flight segment details."""
+    leg: Literal["outbound", "return"] = Field(..., description="Trip leg")
+    segment_index: int = Field(..., ge=0, description="Segment order within leg")
+    origin: str = Field(..., description="Origin IATA code")
+    destination: str = Field(..., description="Destination IATA code")
+    depart_time: time = Field(..., description="Departure time")
+    arrive_time: time = Field(..., description="Arrival time")
+    airline: str = Field(..., description="Airline code")
+    flight_number: Optional[str] = Field(None, description="Flight number")
+    duration_minutes: int = Field(..., ge=0, description="Segment duration in minutes")
 
 
 class Itinerary(BaseModel):
@@ -13,12 +26,14 @@ class Itinerary(BaseModel):
     depart_date: date
     return_date: date
     airline: str = Field(..., description="Airline code")
+    flight_number: Optional[str] = Field(None, description="Flight number")
     stops: int = Field(..., ge=0, description="Number of stops")
     depart_time: time = Field(..., description="Departure time")
     arrive_time: time = Field(..., description="Arrival time")
     travel_minutes: int = Field(..., ge=0, description="Total travel time in minutes")
     price: float = Field(..., ge=0, description="Price in USD")
     concur_deep_link: Optional[str] = Field(None, description="Concur deep link placeholder")
+    segments: List[ItinerarySegment] = Field(default_factory=list, description="Flight segments")
 
 
 class AttendeeItinerary(BaseModel):
@@ -46,6 +61,7 @@ class OptionResultV2(OptionResult):
     # Phase 1 fields inherited from OptionResult
     
     # Phase 2 additions
+    flight_cost: float = Field(default=0.0, ge=0, description="Total flight cost in USD")
     hotel_cost: float = Field(default=0.0, ge=0, description="Total hotel cost in USD")
     extra_nights_count: int = Field(default=0, ge=0, description="Extra nights needed due to arrival/departure spread")
     transfer_cost: float = Field(default=0.0, ge=0, description="Total transfer cost in USD")

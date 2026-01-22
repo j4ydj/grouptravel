@@ -204,7 +204,7 @@ async def simulate_event(
     # Store results with reproducibility info
     simulation_result = SimulationResultModel(
         event_id=event_id,
-        results=[result.model_dump() for result in option_results],
+        results=[result.model_dump(mode="json") for result in option_results],
         version=version,
         pricing_provider=reproducibility_snapshot.get("pricing_provider"),
         pricing_cache_version=reproducibility_snapshot.get("pricing_cache_version"),

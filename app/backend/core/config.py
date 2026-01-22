@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     vertex_location: str = "us-central1"
     
     # Pricing
+    pricing_provider: Literal["mock", "duffel"] = "mock"
     price_volatility: bool = False
     
     # Duffel API

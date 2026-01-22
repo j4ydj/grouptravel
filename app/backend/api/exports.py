@@ -1,7 +1,7 @@
 """Export API endpoints."""
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Response
 from sqlalchemy.orm import Session
-from typing import Optional
+from typing import Optional, List
 import json
 import csv
 import io

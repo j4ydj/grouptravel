@@ -63,7 +63,7 @@ class AuditService:
             action=action,
             before_hash=before_hash,
             after_hash=after_hash,
-            metadata=metadata or {}
+            metadata_json=metadata or {}
         )
         
         db.add(audit_entry)

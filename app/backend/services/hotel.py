@@ -105,8 +105,8 @@ class HotelOptimisationService:
         airport_code: str,
         num_attendees: int,
         room_nights: RoomNightAnalysis,
-        approved_only: bool = True,
-        db: Session
+        db: Session,
+        approved_only: bool = True
     ) -> Optional[HotelAssignment]:
         """
         Select optimal hotel based on capacity, rate, and distance.

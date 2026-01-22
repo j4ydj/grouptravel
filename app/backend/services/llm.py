@@ -171,7 +171,7 @@ class MockLLMClient(LLMClient):
         """Return mock response based on schema."""
         # Simple mock: return default instance or hardcoded response
         # For parse_event_text, return a default EventDraft
-        if "EventDraft" in schema.__name__ or "event" in user_prompt.lower():
+        if schema.__name__ == "EventDraft":
             from app.backend.schemas.event import EventDraft, DateWindow
             from datetime import date, timedelta
             
@@ -203,6 +203,21 @@ class MockLLMClient(LLMClient):
                 duration_days=3,
                 created_by="system"
             )
+        
+        if schema.__name__ == "AISummaryResponse":
+            from app.backend.schemas.ai import AISummaryResponse
+            summary = (
+                "- Recommended option is the lowest total cost and score.\n"
+                "- Review arrival spread and connections rate for operational fit.\n"
+                "- Cost and timing tradeoffs are reflected in the ranking.\n"
+                "- Validate date options align with workshop duration.\n"
+                "- Results are based on current simulation facts."
+            )
+            return AISummaryResponse(summary=summary)
+        
+        if schema.__name__ == "AIAnswerResponse":
+            from app.backend.schemas.ai import AIAnswerResponse
+            return AIAnswerResponse(answer="I don't know based on the current simulation.", confidence=0.0)
         
         # For summary/QA, return simple text response
         if "Summary" in schema.__name__ or "summary" in user_prompt.lower():
